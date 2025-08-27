@@ -20,7 +20,7 @@
         },
         {
           "key": "Access-Control-Allow-Origin",
-          "value": "https://seva-ai-backend-production.up.railway.app"
+          "value": "https://seva-ai-backend-production.up.railway.app,https://seva-ai-frontend.vercel.app,https://localhost:3000,http://localhost:5173"
         },
         {
           "key": "Access-Control-Allow-Methods",

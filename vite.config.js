@@ -7,13 +7,15 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
           router: ['react-router-dom'],
           charts: ['apexcharts', 'react-apexcharts'],
-          maps: ['leaflet', 'react-leaflet', 'leaflet.heat'],
+          maps: ['leaflet', 'react-leaflet'],
+          ui: ['@headlessui/react', 'framer-motion', 'lucide-react'],
         },
       },
     },
