@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 const getApiBaseUrl = () => {
   // In production, use the deployed backend URL
   if (import.meta.env.PROD) {
-    return import.meta.env.VITE_API_BASE_URL || "https://sevaai-backend.onrender.com";
+    return import.meta.env.VITE_API_BASE_URL || "https://seva-ai-backend-production.up.railway.app";
   }
   // In development, use proxy
   return "";

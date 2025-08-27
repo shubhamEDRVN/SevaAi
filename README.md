@@ -15,7 +15,7 @@ This is the frontend application for Seva AI, a complaint management system buil
 ## Prerequisites
 
 - Node.js 18+
-- Backend API running (https://sevaai-backend.onrender.com)
+- Backend API running (https://seva-ai-backend-production.up.railway.app)
 
 ## Installation
 
@@ -77,7 +77,7 @@ This is the frontend application for Seva AI, a complaint management system buil
 
 The frontend automatically connects to:
 - **Development**: `http://localhost:5000` (via proxy)
-- **Production**: `https://sevaai-backend.onrender.com`
+- **Production**: `https://seva-ai-backend-production.up.railway.app`
 
 ## Key Components
 

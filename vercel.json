@@ -20,7 +20,7 @@
         },
         {
           "key": "Access-Control-Allow-Origin",
-          "value": "https://sevaai-backend.onrender.com"
+          "value": "https://seva-ai-backend-production.up.railway.app"
         },
         {
           "key": "Access-Control-Allow-Methods",
