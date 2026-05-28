@@ -24,10 +24,26 @@ connectDB();
 app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:5000", "http://localhost:5173"],
+    origin: function (origin, callback) {
+      const allowedOrigins = [
+        "http://localhost:5000",
+        "http://localhost:5173",
+        process.env.FRONTEND_URL,
+      ];
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log("CORS blocked origin:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 ); // React frontend
+
+// Trust proxy is required when deploying behind a reverse proxy (like Railway)
+// to ensure secure cookies (sameSite: none, secure: true) work correctly.
+app.set("trust proxy", 1);
 if (process.env.NODE_ENV === "development") app.use(logger("dev"));
 
 // Sessions
