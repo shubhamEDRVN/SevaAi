@@ -1,6 +1,6 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
   Camera,
@@ -21,8 +21,7 @@ import {
 } from "lucide-react";
 import Button from "../components/common/Button";
 import { complaintAPI } from "../lib/api";
-import { startRecording, stopRecording } from "../lib/speechAPI";
-import { SpeechAPI } from "../lib/speechAPI";
+import { recognizer, fallbackRecorder } from "../lib/voice";
 
 // Step Components
 const StepIndicator = ({ steps, currentStep, goToStep }) => {
@@ -615,6 +614,7 @@ const ComplaintRegistration = () => {
   const [locationLoading, setLocationLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingField, setRecordingField] = useState(null);
+  const useFallbackRef = useRef(false);
 
   const steps = [
     { id: 1, title: "Complaint Details", icon: MessageSquare },
@@ -689,45 +689,85 @@ const ComplaintRegistration = () => {
   };
 
   // Mic toggle handler for speech-to-text
-  const handleMicToggle = useCallback(async (fieldName) => {
+  const handleMicToggle = useCallback((fieldName) => {
     if (isRecording && recordingField === fieldName) {
-      // Stop recording
-      try {
-        setIsRecording(false);
-        const audioBlob = await stopRecording();
-        const speechApi = SpeechAPI.getInstance();
-        const text = await speechApi.speechToText(audioBlob);
-        if (text) {
-          setFormData((prev) => ({
-            ...prev,
-            [fieldName]: prev[fieldName] ? prev[fieldName] + " " + text : text,
-          }));
-          setTouched((prev) => ({ ...prev, [fieldName]: true }));
-          if (errors[fieldName]) {
-            setErrors((prev) => ({ ...prev, [fieldName]: "" }));
+      setIsRecording(false);
+      setRecordingField(null);
+      if (useFallbackRef.current) {
+        fallbackRecorder.stopAndTranscribe().then(text => {
+          if (text) {
+            setFormData((prev) => ({
+              ...prev,
+              [fieldName]: prev[fieldName] ? prev[fieldName] + " " + text : text,
+            }));
+            setTouched((prev) => ({ ...prev, [fieldName]: true }));
+            if (errors[fieldName]) {
+              setErrors((prev) => ({ ...prev, [fieldName]: "" }));
+            }
           }
-        }
-      } catch (error) {
-        console.error("Speech-to-text error:", error);
-        alert("Failed to convert speech to text. Please try again or type manually.");
-      } finally {
-        setRecordingField(null);
+        }).catch(err => {
+          console.error(err);
+          alert("Fallback transcription failed.");
+        });
+        useFallbackRef.current = false;
+      } else {
+        recognizer.stop();
       }
     } else {
-      // Start recording
-      try {
-        // Stop any existing recording first
-        if (isRecording) {
-          await stopRecording().catch(() => {});
+      if (isRecording) {
+         if (useFallbackRef.current) fallbackRecorder.stopWithoutTranscribing();
+         else recognizer.stop();
+      }
+
+      useFallbackRef.current = false;
+      const started = recognizer.start("en-IN", {
+        onFinal: (finalText) => {
+          if (finalText) {
+            setFormData((prev) => ({
+              ...prev,
+              [fieldName]: prev[fieldName] ? prev[fieldName] + " " + finalText : finalText,
+            }));
+            setTouched((prev) => ({ ...prev, [fieldName]: true }));
+            if (errors[fieldName]) {
+              setErrors((prev) => ({ ...prev, [fieldName]: "" }));
+            }
+          }
+          setIsRecording(false);
+          setRecordingField(null);
+        },
+        onError: (errMsg) => {
+          if (errMsg === "__FALLBACK__") {
+            useFallbackRef.current = true;
+            fallbackRecorder.start().catch((err) => {
+              console.error(err);
+              setIsRecording(false);
+              setRecordingField(null);
+              useFallbackRef.current = false;
+              alert("Could not access microphone for fallback recording.");
+            });
+          } else {
+            console.error("Speech recognition error:", errMsg);
+            setIsRecording(false);
+            setRecordingField(null);
+            alert("Speech recognition error: " + errMsg);
+          }
         }
-        await startRecording();
+      });
+
+      if (!started) {
+        useFallbackRef.current = true;
+        fallbackRecorder.start().catch((err) => {
+          console.error(err);
+          alert("Speech recognition is not supported in your browser.");
+          setIsRecording(false);
+          setRecordingField(null);
+          useFallbackRef.current = false;
+        });
+      }
+
+      if (started || useFallbackRef.current) {
         setIsRecording(true);
         setRecordingField(fieldName);
-      } catch (error) {
-        console.error("Microphone error:", error);
-        alert("Could not access microphone. Please check browser permissions.");
-        setIsRecording(false);
-        setRecordingField(null);
       }
     }
   }, [isRecording, recordingField, errors]);

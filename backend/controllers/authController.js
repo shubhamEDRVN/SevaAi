@@ -121,6 +121,61 @@ exports.loginUser = async (req, res) => {
   }
 };
 
+// Admin/Worker Login
+exports.adminLoginUser = async (req, res) => {
+  try {
+    const { emailOrPhone, password, username } = req.body;
+
+    const loginIdentifier = emailOrPhone || username;
+
+    if (!loginIdentifier || !password) {
+      return res
+        .status(400)
+        .json({ message: "Please provide email/phone and password" });
+    }
+
+    const user = await User.findOne({
+      $or: [
+        { email: loginIdentifier },
+        { phone: loginIdentifier },
+        { username: loginIdentifier },
+      ],
+    });
+
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // ONLY ALLOW ADMIN AND WORKER
+    if (user.role === "user") {
+      return res.status(403).json({ message: "Access denied. Official accounts only." });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    req.session.user = {
+      id: user._id,
+      username: user.username,
+      role: user.role,
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      department: user.department,
+    };
+
+    res.status(200).json({
+      message: "Official Login successful",
+      user: req.session.user,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+};
+
 // Logout
 exports.logoutUser = (req, res) => {
   const sessionId = req.sessionID;

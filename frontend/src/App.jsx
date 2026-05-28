@@ -15,6 +15,7 @@ import FAQ from "./pages/FAQ";
 import Heatmaps from "./pages/Heatmaps";
 import Dashboard from "./pages/Dashboard";
 import WorkerDashboard from "./pages/WorkerDashboard";
+import AdminLogin from "./pages/AdminLogin";
 
 // Role-based route protection component
 const RoleProtectedRoute = ({ children, allowedRoles = [] }) => {
@@ -133,6 +134,9 @@ const AppRoutes = () => {
             </RoleProtectedRoute>
           }
         />
+
+        {/* Official Portal */}
+        <Route path="/portal" element={<AdminLogin />} />
 
         {/* Catch all route - redirect to home */}
         <Route path="*" element={<Navigate to="/" replace />} />

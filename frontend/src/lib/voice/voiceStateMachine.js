@@ -1,0 +1,7 @@
+export const VoiceState = {
+  IDLE: 'IDLE',
+  LISTENING: 'LISTENING',
+  PROCESSING: 'PROCESSING',
+  SPEAKING: 'SPEAKING',
+  ERROR: 'ERROR'
+};

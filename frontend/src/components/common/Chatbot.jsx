@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   MessageCircle,
   X,
@@ -12,11 +12,7 @@ import {
   Paperclip,
   MapPin,
 } from "lucide-react";
-import {
-  startRecording,
-  stopRecording,
-  textToSpeech,
-} from "../../lib/speechAPI";
+import { useVoiceAssistant, VoiceState, synthesizer } from "../../lib/voice";
 import { useAuth } from "../../contexts/AuthContext";
 import { useChatbot } from "../../contexts/ChatbotContext";
 
@@ -34,12 +30,28 @@ const Chatbot = () => {
     },
   ]);
   const [inputMessage, setInputMessage] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
-  const [selectedImage, setSelectedImage] = useState(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
+
+  const handleMessageReceived = useCallback((msg) => {
+    setMessages((prev) => [...prev, { ...msg, id: msg.id || Date.now() + Math.random() }]);
+  }, []);
+
+  const {
+    state: voiceState,
+    interimTranscript,
+    error: voiceError,
+    toggleListening,
+    processText,
+    dismissError
+  } = useVoiceAssistant({
+    onMessageReceived: handleMessageReceived,
+    userLocation
+  });
+
+  const isRecording = voiceState === VoiceState.LISTENING;
+  const isTyping = voiceState === VoiceState.PROCESSING;
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -84,7 +96,7 @@ const Chatbot = () => {
     if (isOpen && !userLocation && !isLoadingLocation) {
       getCurrentLocation();
     }
-  }, [isOpen]);
+  }, [isOpen, userLocation, isLoadingLocation]);
 
   const getCurrentLocation = () => {
     if (!navigator.geolocation) {
@@ -156,295 +168,42 @@ const Chatbot = () => {
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
 
-    // Check if user is authenticated
     if (!user) {
       openAuthModal();
       return;
     }
 
-    const userMessage = {
-      id: Date.now(),
-      text: inputMessage,
-      sender: "user",
-      timestamp: new Date(),
-      location: userLocation, // Include location if available
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
     const currentInput = inputMessage;
     setInputMessage("");
-    setIsTyping(true);
 
-    try {
-      // Send message to backend with the correct format
-      const requestBody = {
-        rawText: currentInput, // Changed from 'message' to 'rawText'
-      };
+    // Add user message
+    const userMessage = {
+      id: Date.now(),
+      text: currentInput,
+      sender: "user",
+      timestamp: new Date(),
+      location: userLocation,
+    };
+    setMessages((prev) => [...prev, userMessage]);
 
-      // Include coordinates if available
-      if (userLocation) {
-        requestBody.lat = userLocation.latitude;
-        requestBody.lng = userLocation.longitude;
-      }
-
-      console.log("Sending to backend:", requestBody);
-
-      const response = await fetch("/api/complaints/process", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include", // Include credentials for session
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        console.error("Response error:", errorData);
-        throw new Error("Failed to get response");
-      }
-
-      const data = await response.json();
-      console.log("Backend response:", data);
-
-      let botResponseText = "";
-
-      // Handle different response types
-      if (data.type === "faq") {
-        botResponseText = data.answer || "Here's some information...";
-      } else if (data.type === "statusQuery") {
-        botResponseText = `Your complaint ${data.complaintId} is currently ${
-          data.status
-        } in the ${data.department} department. Location: ${
-          data.locationName || "Unknown"
-        }`;
-      } else if (data.type === "newComplaint") {
-        if (data.ticketId) {
-          // Complaint was successfully created
-          botResponseText = `✅ ${data.message} Your ticket ID is: ${data.ticketId}. Status: ${data.status}. Department: ${data.department}.`;
-        } else {
-          // Complaint detected but needs coordinates
-          botResponseText = `${data.message} I'll get your location to complete the complaint registration.`;
-
-          // Automatically request location when coordinates are needed
-          if (!userLocation) {
-            setTimeout(() => {
-              setIsLoadingLocation(true);
-              navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                  const location = {
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                    accuracy: position.coords.accuracy,
-                  };
-                  setUserLocation({
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                    accuracy: position.coords.accuracy,
-                    timestamp: new Date().toISOString(),
-                  });
-                  setIsLoadingLocation(false);
-
-                  // Location obtained, now send the same complaint with coordinates
-                  try {
-                    const confirmResponse = await fetch(
-                      "/api/complaints/process",
-                      {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        credentials: "include",
-                        body: JSON.stringify({
-                          rawText: currentInput,
-                          lat: location.lat,
-                          lng: location.lng,
-                        }),
-                      }
-                    );
-
-                    if (confirmResponse.ok) {
-                      const confirmData = await confirmResponse.json();
-                      let confirmMessage = "";
-
-                      if (confirmData.ticketId) {
-                        confirmMessage = `✅ Complaint registered successfully! Your ticket ID is: ${confirmData.ticketId}. Department: ${confirmData.department}. Status: ${confirmData.status}.`;
-                      } else {
-                        confirmMessage =
-                          confirmData.message || "Complaint processed.";
-                      }
-
-                      const locationBotMessage = {
-                        id: Date.now() + 2,
-                        text: confirmMessage,
-                        sender: "bot",
-                        timestamp: new Date(),
-                      };
-                      setMessages((prev) => [...prev, locationBotMessage]);
-                    }
-                  } catch (error) {
-                    console.error("Error confirming complaint:", error);
-                    const errorMessage = {
-                      id: Date.now() + 2,
-                      text: "Sorry, there was an error processing your complaint. Please try again.",
-                      sender: "bot",
-                      timestamp: new Date(),
-                    };
-                    setMessages((prev) => [...prev, errorMessage]);
-                  }
-                },
-                (error) => {
-                  setIsLoadingLocation(false);
-                  console.error("Error getting location:", error);
-                  const errorMessage = {
-                    id: Date.now() + 2,
-                    text: "Unable to get your location. Please enable location access and try again.",
-                    sender: "bot",
-                    timestamp: new Date(),
-                  };
-                  setMessages((prev) => [...prev, errorMessage]);
-                },
-                {
-                  enableHighAccuracy: true,
-                  timeout: 15000,
-                  maximumAge: 300000,
-                }
-              );
-            }, 1000); // Small delay for better UX
-          } else {
-            // We already have location, send immediately
-            setTimeout(async () => {
-              try {
-                const confirmResponse = await fetch("/api/complaints/process", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                  credentials: "include",
-                  body: JSON.stringify({
-                    rawText: currentInput,
-                    lat: userLocation.latitude,
-                    lng: userLocation.longitude,
-                  }),
-                });
-
-                if (confirmResponse.ok) {
-                  const confirmData = await confirmResponse.json();
-                  let confirmMessage = "";
-
-                  if (confirmData.ticketId) {
-                    confirmMessage = `✅ Complaint registered successfully! Your ticket ID is: ${confirmData.ticketId}. Department: ${confirmData.department}. Status: ${confirmData.status}.`;
-                  } else {
-                    confirmMessage =
-                      confirmData.message || "Complaint processed.";
-                  }
-
-                  const locationBotMessage = {
-                    id: Date.now() + 2,
-                    text: confirmMessage,
-                    sender: "bot",
-                    timestamp: new Date(),
-                  };
-                  setMessages((prev) => [...prev, locationBotMessage]);
-                }
-              } catch (error) {
-                console.error("Error confirming complaint:", error);
-                const errorMessage = {
-                  id: Date.now() + 2,
-                  text: "Sorry, there was an error processing your complaint. Please try again.",
-                  sender: "bot",
-                  timestamp: new Date(),
-                };
-                setMessages((prev) => [...prev, errorMessage]);
-              }
-            }, 1000);
-          }
-        }
-      } else {
-        botResponseText =
-          data.message || data.response || "Thank you for your message.";
-      }
-
-      const botMessage = {
-        id: Date.now() + 1,
-        text: botResponseText,
-        sender: "bot",
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, botMessage]);
-    } catch (error) {
-      console.error("Chat error:", error);
-      const errorMessage = {
-        id: Date.now() + 1,
-        text: "Sorry, I'm having trouble responding right now. Please try again later.",
-        sender: "bot",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsTyping(false);
-    }
+    // Process through the voice module
+    await processText(currentInput);
   };
 
-  const handleSpeechToText = async () => {
-    if (isRecording) {
-      try {
-        setIsRecording(false);
-        const audioBlob = await stopRecording();
 
-        const formData = new FormData();
-        formData.append("audio", audioBlob, "recording.wav");
-
-        const response = await fetch("/api/chat/speech-to-text", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to transcribe audio");
-        }
-
-        const data = await response.json();
-        setInputMessage(data.text);
-        inputRef.current?.focus();
-      } catch (error) {
-        console.error("Speech to text error:", error);
-        setIsTyping(false);
-        alert("Failed to convert speech to text. Please try again.");
-      }
-    } else {
-      try {
-        setIsRecording(true);
-        await startRecording();
-      } catch (error) {
-        console.error("Recording error:", error);
-        setIsRecording(false);
-        alert("Failed to access microphone. Please check permissions.");
-      }
-    }
-  };
 
   const handleTextToSpeech = async (text, messageId) => {
     if (speakingMessageId === messageId) {
-      // Stop current speech
-      window.speechSynthesis.cancel();
+      synthesizer.stop();
       setSpeakingMessageId(null);
-    } else {
-      try {
-        // Stop any other speech first
-        window.speechSynthesis.cancel();
-        setSpeakingMessageId(messageId);
-        await textToSpeech(text);
-      } catch (error) {
-        console.error("Text to speech error:", error);
-        // Only show alert for actual errors, not user interruptions
-        if (!error.message.includes("interrupted")) {
-          alert("Text-to-speech is not supported in your browser.");
-        }
-      } finally {
-        setSpeakingMessageId(null);
-      }
+      return;
+    }
+    synthesizer.stop();
+    setSpeakingMessageId(messageId);
+    try {
+      await synthesizer.speak(text);
+    } finally {
+      setSpeakingMessageId(null);
     }
   };
 
@@ -461,8 +220,6 @@ const Chatbot = () => {
         alert("Please select a valid image file");
         return;
       }
-
-      setSelectedImage(file);
 
       // Automatically send the image as a message
       const reader = new FileReader();
@@ -546,11 +303,10 @@ const Chatbot = () => {
       {/* Chat Window */}
       {shouldRender && (
         <div
-          className={`bg-white rounded-lg shadow-2xl border border-gray-200 w-[90vw] max-w-[480px] h-[70vh] max-h-[600px] flex flex-col transition-all duration-300 ease-out transform origin-bottom-right ${
-            isOpen
+          className={`bg-white rounded-lg shadow-2xl border border-gray-200 w-[90vw] max-w-[480px] h-[70vh] max-h-[600px] flex flex-col transition-all duration-300 ease-out transform origin-bottom-right ${isOpen
               ? "translate-y-0 opacity-100 scale-100"
               : "translate-y-4 opacity-0 scale-95"
-          }`}
+            }`}
         >
           {/* Header */}
           <div className="bg-primary text-white p-4 rounded-t-lg flex items-center justify-between">
@@ -593,21 +349,18 @@ const Chatbot = () => {
             {messages.map((message) => (
               <div
                 key={message.id}
-                className={`flex ${
-                  message.sender === "user" ? "justify-end" : "justify-start"
-                }`}
+                className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"
+                  }`}
               >
                 <div
-                  className={`flex space-x-2 max-w-sm ${
-                    message.sender === "user"
+                  className={`flex space-x-2 max-w-sm ${message.sender === "user"
                       ? "flex-row-reverse space-x-reverse"
                       : ""
-                  }`}
+                    }`}
                 >
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      message.sender === "user" ? "bg-primary" : "bg-gray-200"
-                    }`}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${message.sender === "user" ? "bg-primary" : "bg-gray-200"
+                      }`}
                   >
                     {message.sender === "user" ? (
                       <User className="h-4 w-4 text-white" />
@@ -617,11 +370,10 @@ const Chatbot = () => {
                   </div>
                   <div>
                     <div
-                      className={`rounded-lg p-3 ${
-                        message.sender === "user"
+                      className={`rounded-lg p-3 ${message.sender === "user"
                           ? "bg-primary text-white"
                           : "bg-gray-100 text-gray-800"
-                      }`}
+                        }`}
                     >
                       {/* Display image if present */}
                       {message.image && (
@@ -655,11 +407,10 @@ const Chatbot = () => {
                             onClick={() =>
                               handleTextToSpeech(message.text, message.id)
                             }
-                            className={`ml-2 p-1 rounded transition-colors ${
-                              speakingMessageId === message.id
+                            className={`ml-2 p-1 rounded transition-colors ${speakingMessageId === message.id
                                 ? "bg-primary text-white"
                                 : "hover:bg-gray-200 text-gray-500"
-                            }`}
+                              }`}
                             aria-label="Read message aloud"
                           >
                             {speakingMessageId === message.id ? (
@@ -707,14 +458,25 @@ const Chatbot = () => {
 
           {/* Input Area */}
           <div className="border-t border-gray-200 p-4">
+            {/* Voice Error Toast */}
+            {voiceError && (
+              <div className="mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+                <p className="text-xs text-red-600">{voiceError}</p>
+                <button
+                  onClick={dismissError}
+                  className="ml-2 text-red-400 hover:text-red-600"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             <div className="flex space-x-2">
               <button
-                onClick={handleSpeechToText}
-                className={`p-2 rounded-lg transition-colors ${
-                  isRecording
+                onClick={toggleListening}
+                className={`p-2 rounded-lg transition-colors ${isRecording
                     ? "bg-red-500 hover:bg-red-600 text-white animate-pulse"
                     : "bg-gray-200 hover:bg-gray-300 text-gray-600"
-                }`}
+                  }`}
                 disabled={isTyping}
                 aria-label={isRecording ? "Stop recording" : "Start recording"}
               >
@@ -737,14 +499,21 @@ const Chatbot = () => {
               <input
                 ref={inputRef}
                 type="text"
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
+                value={isRecording && interimTranscript ? interimTranscript : inputMessage}
+                onChange={(e) => {
+                  if (!isRecording) setInputMessage(e.target.value);
+                }}
                 onKeyPress={handleKeyPress}
                 placeholder={
-                  isRecording ? "Listening..." : "Type your message..."
+                  isRecording
+                    ? "Listening... speak now"
+                    : "Type your message..."
                 }
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                disabled={isTyping || isRecording}
+                className={`flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-colors ${isRecording
+                    ? "border-red-400 bg-red-50 placeholder-red-400"
+                    : "border-gray-300"
+                  }`}
+                disabled={isTyping}
               />
               <button
                 onClick={handleSendMessage}

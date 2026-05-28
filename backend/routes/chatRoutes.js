@@ -3,23 +3,33 @@ const router = express.Router();
 const multer = require("multer");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { analyze } = require("../services/geminiService");
+const googleTTS = require("google-tts-api");
 
 // Configure multer for audio uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    // Accept audio files
-    if (
-      file.mimetype.startsWith("audio/") ||
-      file.mimetype === "application/octet-stream"
-    ) {
+    const allowed = [
+      "audio/webm",
+      "audio/ogg",
+      "audio/mp4",
+      "audio/mpeg",
+      "audio/wav",
+      "audio/x-wav",
+      "application/octet-stream", // Some browsers send this for audio
+    ];
+    // Check by mimetype prefix or exact match
+    const isAllowed =
+      allowed.includes(file.mimetype) ||
+      file.mimetype.startsWith("audio/");
+    if (isAllowed) {
       cb(null, true);
     } else {
-      cb(new Error("Only audio files are allowed"), false);
+      cb(new Error(`Unsupported file type: ${file.mimetype}`), false);
     }
   },
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB
+    fileSize: 15 * 1024 * 1024, // 15MB
   },
 });
 
@@ -49,63 +59,76 @@ router.post("/message", async (req, res) => {
   }
 });
 
-// Speech-to-text endpoint
+// Speech-to-text endpoint — using Gemini 1.5 Flash to bypass recent quotas 
 router.post("/speech-to-text", upload.single("audio"), async (req, res) => {
   try {
-    console.log("Speech-to-text request received");
-    console.log(
-      "File:",
-      req.file
-        ? {
-            originalname: req.file.originalname,
-            mimetype: req.file.mimetype,
-            size: req.file.size,
-          }
-        : "No file"
-    );
-
     if (!req.file) {
-      console.log("No audio file provided");
       return res.status(400).json({ error: "No audio file provided" });
     }
 
     if (!genAI) {
-      console.log("Gemini API not configured");
-      return res
-        .status(500)
-        .json({
-          error:
-            "Speech recognition service not available - Gemini API key missing",
-        });
+      return res.status(503).json({ error: "Gemini API key not configured." });
     }
 
-    console.log("Processing audio with Gemini...");
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    // Convert audio buffer to base64
+    const mimeType = req.body.mimeType || req.file.mimetype || "audio/webm";
     const base64Audio = req.file.buffer.toString("base64");
-    console.log("Audio converted to base64, length:", base64Audio.length);
+
+    // Use gemini-flash-latest
+    const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
 
     const result = await model.generateContent([
       {
         inlineData: {
           data: base64Audio,
-          mimeType: req.file.mimetype,
+          mimeType: mimeType.split(";")[0],
         },
       },
-      "Please transcribe this audio file to text. Only return the transcribed text, nothing else.",
+      {
+        text: "Transcribe this audio file to text. The speaker may be speaking in English, Hindi, or a mix (Hinglish). Return ONLY the transcribed text with no additional commentary, labels, or formatting.",
+      },
     ]);
 
-    const transcription = result.response.text();
-    console.log("Transcription successful:", transcription);
+    const transcription = result.response.text().trim();
+
+    if (!transcription) {
+      return res.status(422).json({
+        error: "No speech detected in the audio. Please try again.",
+      });
+    }
 
     res.json({ text: transcription });
   } catch (error) {
-    console.error("Speech-to-text error:", error);
+    console.error("[STT Gemini Fallback] Error:", error.message);
     res.status(500).json({
-      error: "Failed to transcribe audio",
-      details: error.message,
+      error: `STT Error: ${error.message}`,
     });
+  }
+});
+
+// Text-to-speech endpoint — using google-tts-api for robust Hindi/English voices
+router.post("/text-to-speech", async (req, res) => {
+  try {
+    const { text, language = "en" } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+
+    // Convert language code if needed (e.g., en-IN to en)
+    const langCode = language.startsWith("hi") ? "hi" : "en";
+
+    // Get an array of base64 audio chunks (handles long sentences safely)
+    const results = await googleTTS.getAllAudioBase64(text, {
+      lang: langCode,
+      slow: false,
+      host: "https://translate.google.com",
+      splitPunct: ",.?",
+    });
+
+    res.json({ audioChunks: results });
+  } catch (error) {
+    console.error("[TTS Backend Error]:", error.message);
+    res.status(500).json({ error: `TTS Error: ${error.message}` });
   }
 });
 
@@ -137,13 +160,13 @@ async function generateChatResponse(message, conversationHistory = []) {
   // Use Gemini for general conversation if available
   if (genAI) {
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
       const context =
         conversationHistory.length > 0
           ? `Previous conversation:\n${conversationHistory
-              .map((msg) => `${msg.sender}: ${msg.text}`)
-              .join("\n")}\n\n`
+            .map((msg) => `${msg.sender}: ${msg.text}`)
+            .join("\n")}\n\n`
           : "";
 
       const prompt = `${context}You are a helpful municipal assistant chatbot. The user is interacting with a municipal complaints system. 

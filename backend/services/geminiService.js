@@ -9,7 +9,7 @@ async function analyze(rawText) {
   if (!genAI) return { error: "Gemini API not configured" };
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-latest" });
 
     // Prompt for Gemini
     const prompt = `

@@ -89,6 +89,45 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const adminLogin = async (emailOrPhone, password) => {
+    try {
+      const response = await fetch("/api/auth/admin-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ emailOrPhone, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setUser(data.user);
+        
+        // Redirect based on user role
+        setTimeout(() => {
+          if (data.user.role === "admin") {
+            window.location.href = "/dashboard";
+          } else if (data.user.role === "worker") {
+            window.location.href = "/worker";
+          }
+        }, 100);
+
+        return { success: true, user: data.user, message: data.message };
+      } else {
+        return { success: false, error: data.message, message: data.message };
+      }
+    } catch (error) {
+      console.error("Admin Login error:", error);
+      return {
+        success: false,
+        error: "Network error occurred. Please check your connection.",
+        message: "Network error occurred. Please check your connection.",
+      };
+    }
+  };
+
   const register = async (username, password, additionalData = {}) => {
     try {
       const response = await fetch("/api/auth/register", {
@@ -174,6 +213,7 @@ export const AuthProvider = ({ children }) => {
     user,
     loading,
     login,
+    adminLogin,
     register,
     logout,
     showAuthModal,
